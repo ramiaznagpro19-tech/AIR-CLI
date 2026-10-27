@@ -1,449 +1,115 @@
-#!/usr/bin/env node
+# AIR CLI
 
-/**
- * @license
- * Copyright 2025 Qwen Code
- * SPDX-License-Identifier: Apache-2.0
- */
+AIR CLI is a terminal-first AI coding agent for local development, automation, and editor workflows.
 
-/**
- * Production bin entry wrapper.
- *
- * For most commands, global.gc() must be available for the memory-pressure
- * monitor's critical-tier cleanup. On POSIX under Node the entry exposes gc at
- * runtime and imports cli.js in this process; on Windows and under Bun it
- * launches the bundled CLI as a child with --expose-gc.
- *
- * For bootstrap fast paths: imports cli.js directly in-process, skipping the
- * spawnSync overhead. These paths do not need global.gc().
- */
+It keeps the original upstream licensing and attribution while offering a clean AIR-branded distribution and a user configuration directory at `~/.air`.
 
-const relaunchArgs = process.env['QWEN_CODE_RELAUNCH_ARGS'];
-let cliArgs = process.argv.slice(2);
-try {
-  cliArgs = relaunchArgs ? JSON.parse(relaunchArgs) : cliArgs;
-} catch {
-  // Ignore stale or user-provided junk; normal argv is still usable.
+## Why AIR CLI?
+
+- Agentic by default for coding and automation in the terminal
+- Multi-protocol support for OpenAI, Anthropic, Gemini, and Vertex AI
+- Compatible with OpenRouter, Ollama, Mistral, and DeepSeek providers
+- Local-first workflow with a portable config directory at `~/.air`
+
+## Installation
+
+### npm
+
+```bash
+npm install -g @air-cli/air-cli
+```
+
+### Quick start
+
+```bash
+air
+```
+
+Inside the session, run `/auth` to configure your model provider and API key.
+
+## Provider examples
+
+### OpenAI
+
+```json
+{
+  "provider": "openai",
+  "apiKey": "YOUR_KEY",
+  "model": "gpt-4o-mini"
 }
-delete process.env['QWEN_CODE_RELAUNCH_ARGS'];
-delete process.env['QWEN_CODE_PENDING_COMPILE_CACHE'];
+```
 
-function hasFlag(flag, alias) {
-  for (const arg of cliArgs) {
-    if (arg === '--') {
-      return false;
-    }
-    if (arg === flag || arg === alias) {
-      return true;
-    }
-  }
-  return false;
+### Anthropic
+
+```json
+{
+  "provider": "anthropic",
+  "apiKey": "YOUR_KEY",
+  "model": "claude-3-5-sonnet-20241022"
 }
+```
 
-function isInProcessFastPath() {
-  const first = cliArgs[0];
-  if (
-    first === 'serve' ||
-    first === 'mcp' ||
-    first === 'memory' ||
-    first === 'managed-runtime-bootstrap' ||
-    first === 'managed-runtime-bootstrap-worker'
-  ) {
-    return true;
-  }
-  if (first === undefined || first.startsWith('-')) {
-    return hasFlag('--help', '-h') || hasFlag('--version', '-v');
-  }
-  return false;
+### Gemini
+
+```json
+{
+  "provider": "gemini",
+  "apiKey": "YOUR_KEY",
+  "model": "gemini-2.0-flash"
 }
+```
 
-const isTopLevelVersion =
-  (cliArgs[0] === undefined || cliArgs[0].startsWith('-')) &&
-  hasFlag('--version', '-v');
+### Vertex AI
 
-if (isTopLevelVersion && process.env['CLI_VERSION']) {
-  process.stdout.write(`${process.env['CLI_VERSION']}\n`);
-  process.exit(0);
+```json
+{
+  "provider": "vertex-ai",
+  "project": "your-gcp-project",
+  "location": "us-central1",
+  "model": "gemini-2.0-flash"
 }
+```
 
-const { existsSync, readFileSync, realpathSync, statSync } = await import(
-  'node:fs'
-);
-const { createHash } = await import('node:crypto');
-const { homedir, tmpdir } = await import('node:os');
-const { parseEnv } = await import('node:util');
-const { fileURLToPath, pathToFileURL } = await import('node:url');
-const { delimiter, dirname, join, parse, resolve, sep } = await import(
-  'node:path'
-);
+### OpenRouter
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const currentEntryPath = realpathSync(fileURLToPath(import.meta.url));
-
-function getHomeDir() {
-  try {
-    return homedir() || tmpdir();
-  } catch {
-    return tmpdir();
-  }
+```json
+{
+  "provider": "openrouter",
+  "apiKey": "YOUR_KEY",
+  "model": "openai/gpt-4o-mini"
 }
+```
 
-function resolveAirHome() {
-  const configured = process.env['AIR_HOME'] ?? process.env['QWEN_HOME'];
-  if (!configured) return join(getHomeDir(), '.air');
-  if (configured === '~') return getHomeDir();
-  if (configured.startsWith('~/') || configured.startsWith('~\\')) {
-    return join(
-      getHomeDir(),
-      ...configured
-        .slice(2)
-        .split(/[/\\]+/)
-        .filter(Boolean),
-    );
-  }
-  return resolve(configured);
+### Ollama
+
+```json
+{
+  "provider": "ollama",
+  "baseUrl": "http://localhost:11434",
+  "model": "llama3.1"
 }
+```
 
-function preResolveAirHome() {
-  if (Object.hasOwn(process.env, 'AIR_HOME')) return;
-  const home = getHomeDir();
-  for (const candidate of [join(home, '.air', '.env'), join(home, '.env')]) {
-    try {
-      const source = readFileSync(candidate, 'utf8')
-        .replace(/^\uFEFF/, '')
-        .replace(/^(\s*(?:export\s+)?AIR_HOME):[^\S\r\n]+/gm, '$1=')
-        .replace(/^(\s*(?:export\s+)?QWEN_HOME):[^\S\r\n]+/gm, '$1=');
-      const configured = parseEnv(source)['AIR_HOME'] ?? parseEnv(source)['QWEN_HOME'];
-      if (configured) {
-        process.env['AIR_HOME'] = configured;
-        return;
-      }
-    } catch {
-      // Match the CLI's quiet handling of missing or invalid home env files.
-    }
-  }
+### Mistral
+
+```json
+{
+  "provider": "mistral",
+  "apiKey": "YOUR_KEY",
+  "model": "mistral-large-latest"
 }
+```
 
-delete process.env['QWEN_CODE_MANAGED_NPM_UPDATE'];
-preResolveAirHome();
+### DeepSeek
 
-function getManagedNpmPin() {
-  try {
-    const pin = JSON.parse(process.env['QWEN_CODE_MANAGED_NPM_PIN'] ?? '');
-    if (pin.bootstrap !== currentEntryPath) return undefined;
-    if (
-      typeof pin.updateRoot !== 'string' ||
-      resolve(pin.updateRoot) !== pin.updateRoot
-    ) {
-      return undefined;
-    }
-    if (pin.version === null) {
-      return { version: null, updateRoot: pin.updateRoot };
-    }
-    return typeof pin.version === 'string' &&
-      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
-        pin.version,
-      )
-      ? { version: pin.version, updateRoot: pin.updateRoot }
-      : undefined;
-  } catch {
-    return undefined;
-  }
+```json
+{
+  "provider": "deepseek",
+  "apiKey": "YOUR_KEY",
+  "model": "deepseek-chat"
 }
+```
 
-const managedNpmPin = getManagedNpmPin();
-const managedNpmUpdateRoot =
-  managedNpmPin?.updateRoot ?? join(resolveAirHome(), 'updates', 'npm');
+## Attribution and license
 
-function getManagedNpmInstallation() {
-  try {
-    if (managedNpmPin?.version === null) return undefined;
-    const launcherRoot = join(
-      managedNpmUpdateRoot,
-      createHash('sha256').update(currentEntryPath).digest('hex').slice(0, 16),
-    );
-    let version = managedNpmPin?.version;
-    if (version === undefined) {
-      const active = JSON.parse(
-        readFileSync(join(launcherRoot, 'active.json'), 'utf8'),
-      );
-      const basePackageJsonPath = [
-        join(__dirname, 'package.json'),
-        join(__dirname, '..', 'package.json'),
-      ].find((candidate) => existsSync(candidate));
-      if (!basePackageJsonPath) return undefined;
-      const basePackage = JSON.parse(readFileSync(basePackageJsonPath, 'utf8'));
-      if (
-        typeof active.version !== 'string' ||
-        !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
-          active.version,
-        ) ||
-        typeof active.bootstrap !== 'string' ||
-        realpathSync(active.bootstrap) !== currentEntryPath ||
-        active.baseVersion !== basePackage.version ||
-        active.bootstrapCtimeMs !== statSync(currentEntryPath).ctimeMs
-      ) {
-        return undefined;
-      }
-      version = active.version;
-    }
-    const packageRoot = join(
-      launcherRoot,
-      'versions',
-      version,
-      'node_modules',
-      '@air-cli',
-      'air-cli',
-    );
-    const packageJsonPath = join(packageRoot, 'package.json');
-    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-    const cliPath = join(packageRoot, 'cli.js');
-    if (
-      pkg.name !== '@air-cli/air-cli' ||
-      pkg.version !== version ||
-      !existsSync(cliPath)
-    ) {
-      return undefined;
-    }
-    process.env['QWEN_CODE_MANAGED_NPM_UPDATE'] = 'true';
-    return { cliPath, packageJsonPath, version };
-  } catch {
-    return undefined;
-  }
-}
-
-const standaloneShim = process.env['QWEN_CODE_LAUNCHER_PATH'];
-delete process.env['QWEN_CODE_LAUNCHER_PATH'];
-
-const managedRuntimeBootstrap =
-  cliArgs[0] === 'managed-runtime-bootstrap' ||
-  cliArgs[0] === 'managed-runtime-bootstrap-worker';
-const managedNpmInstallation = managedRuntimeBootstrap
-  ? undefined
-  : getManagedNpmInstallation();
-const validStandaloneShim =
-  standaloneShim && existsSync(standaloneShim) ? standaloneShim : undefined;
-process.env['QWEN_CODE_CLI'] =
-  validStandaloneShim ?? fileURLToPath(import.meta.url);
-if (validStandaloneShim) {
-  delete process.env['QWEN_CODE_MANAGED_NPM_PIN'];
-  delete process.env['QWEN_CODE_MANAGED_NPM_ROOT'];
-} else {
-  process.env['QWEN_CODE_MANAGED_NPM_ROOT'] = managedNpmUpdateRoot;
-  process.env['QWEN_CODE_MANAGED_NPM_PIN'] = JSON.stringify({
-    bootstrap: currentEntryPath,
-    version: managedNpmInstallation?.version ?? null,
-    updateRoot: managedNpmUpdateRoot,
-  });
-}
-const cliPathCandidates = [
-  managedNpmInstallation?.cliPath,
-  join(__dirname, 'cli.js'),
-  join(__dirname, '..', 'dist', 'cli.js'),
-].filter(Boolean);
-const packageJsonPathCandidates = [
-  managedNpmInstallation?.packageJsonPath,
-  join(__dirname, 'package.json'),
-  join(__dirname, '..', 'package.json'),
-].filter(Boolean);
-const cliPath =
-  cliPathCandidates.find((candidate) => existsSync(candidate)) ??
-  cliPathCandidates[0];
-const packageJsonPath =
-  packageJsonPathCandidates.find((candidate) => existsSync(candidate)) ??
-  packageJsonPathCandidates[0];
-
-if (!process.env['QWEN_CODE_STARTUP_VERSION']?.trim()) {
-  try {
-    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-    process.env['QWEN_CODE_STARTUP_VERSION'] = pkg.version || 'unknown';
-  } catch {
-    // The CLI has its own version fallback when package metadata is unavailable.
-  }
-}
-
-if (isTopLevelVersion) {
-  try {
-    const { readFileSync } = await import('node:fs');
-    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-    process.stdout.write(`${pkg.version || 'unknown'}\n`);
-    process.exit(0);
-  } catch {
-    // Fall through to cli.js, which has its own version fallback.
-  }
-}
-
-if (isInProcessFastPath()) {
-  const { default: module } = await import('node:module');
-  const compileCache = module.enableCompileCache?.();
-  if (
-    cliArgs[0] === 'serve' &&
-    !process.env['NODE_COMPILE_CACHE'] &&
-    compileCache?.status === module.constants?.compileCacheStatus?.ENABLED &&
-    compileCache?.directory
-  ) {
-    process.env['QWEN_CODE_PENDING_COMPILE_CACHE'] = compileCache.directory;
-  }
-  process.argv[1] = cliPath;
-  await import(pathToFileURL(cliPath).href);
-} else {
-  const { spawnSync } = await import('node:child_process');
-  const UPDATE_COMPLETE_EXIT_CODE = 44;
-  const SPAWN_FAILURE_EXIT_CODE = 126;
-  const exitOnSpawnError = (command, error) => {
-    const detail = [
-      ...[error.code, error.syscall].filter(
-        (part) => typeof part === 'string' && !error.message.includes(part),
-      ),
-      ...(error.errno === undefined ? [] : [`errno ${error.errno}`]),
-    ].join(' ');
-    process.stderr.write(
-      `Failed to start ${command}: ${error.message}${detail ? ` (${detail})` : ''}\n`,
-    );
-    process.exit(SPAWN_FAILURE_EXIT_CODE);
-  };
-  const UNSAFE_CMD_CHARS = /[&|<>^%!"`\n\r]/;
-  const entryPath = resolve(process.argv[1]);
-  delete process.env['QWEN_CODE_LAUNCHER_PID'];
-  const launchEnv = { ...process.env };
-
-  const findLauncher = () => {
-    const launcherNames =
-      process.platform === 'win32'
-        ? ['air.cmd', 'air.exe', 'air']
-        : ['air'];
-    const entryRootLength = parse(entryPath).root.length;
-    const launcherFromEnv = standaloneShim;
-    const launcherCandidates = process.env['PATH']
-      ?.split(delimiter)
-      .flatMap((dir) => launcherNames.map((name) => join(dir, name)))
-      .filter((candidate) => existsSync(candidate));
-    return launcherFromEnv && existsSync(launcherFromEnv)
-      ? launcherFromEnv
-      : launcherCandidates
-          ?.map((candidate) => {
-            if (resolve(candidate) === entryPath) {
-              return { candidate, score: Number.MAX_SAFE_INTEGER };
-            }
-            try {
-              if (realpathSync(candidate) === realpathSync(entryPath)) {
-                return { candidate, score: Number.MAX_SAFE_INTEGER };
-              }
-            } catch {
-              // Fall back to matching the installation prefix.
-            }
-            let parent = resolve(dirname(candidate));
-            while (
-              parent.length > entryRootLength &&
-              entryPath !== parent &&
-              !entryPath.startsWith(`${parent}${sep}`)
-            ) {
-              const next = dirname(parent);
-              if (next === parent) break;
-              parent = next;
-            }
-            return { candidate, score: parent.length };
-          })
-          .filter(({ score }) => score > entryRootLength)
-          .sort((a, b) => b.score - a.score)[0]?.candidate;
-  };
-
-  const relaunchAfterUpdate = () => {
-    const launcher = findLauncher();
-    if (!launcher) {
-      process.stderr.write(
-        'Update successful! The new version will be used on your next run.\n',
-      );
-      process.exit(0);
-    }
-    const relaunchEnv = {
-      ...launchEnv,
-      QWEN_CODE_RELAUNCH_ARGS: JSON.stringify(cliArgs),
-      QWEN_CODE_SKIP_UPDATE_CHECK_ONCE: 'true',
-    };
-    delete relaunchEnv['QWEN_CODE_STARTUP_VERSION'];
-    delete relaunchEnv['QWEN_CODE_MANAGED_NPM_PIN'];
-    if (
-      process.platform === 'win32' &&
-      launcher.endsWith('.cmd') &&
-      UNSAFE_CMD_CHARS.test(launcher)
-    ) {
-      process.stderr.write(
-        'Update successful! The new version will be used on your next run.\n',
-      );
-      process.exit(0);
-      return;
-    }
-    const relaunchResult =
-      process.platform === 'win32' && launcher.endsWith('.cmd')
-        ? spawnSync(
-            process.env['ComSpec'] ?? 'cmd.exe',
-            ['/d', '/s', '/c', `""${launcher}""`],
-            {
-              stdio: 'inherit',
-              env: relaunchEnv,
-              windowsVerbatimArguments: true,
-            },
-          )
-        : spawnSync(launcher, [], {
-            stdio: 'inherit',
-            env: relaunchEnv,
-          });
-    if (relaunchResult.error) {
-      process.stderr.write(
-        'Update successful! The new version will be used on your next run.\n',
-      );
-      exitOnSpawnError(launcher, relaunchResult.error);
-    } else if (relaunchResult.signal) {
-      process.kill(process.pid, relaunchResult.signal);
-    } else {
-      process.exit(relaunchResult.status ?? 1);
-    }
-  };
-
-  const { default: module } = await import('node:module');
-  const compileCache = module.enableCompileCache?.();
-  const compileCacheEnv =
-    !process.env['NODE_COMPILE_CACHE'] &&
-    compileCache?.status === module.constants?.compileCacheStatus?.ENABLED &&
-    compileCache?.directory
-      ? { NODE_COMPILE_CACHE: compileCache.directory }
-      : {};
-
-  if (process.platform !== 'win32' && !process.versions.bun) {
-    const [{ setFlagsFromString }, { runInNewContext }] = await Promise.all([
-      import('node:v8'),
-      import('node:vm'),
-    ]);
-    setFlagsFromString('--expose-gc');
-    globalThis.gc ??= runInNewContext('gc');
-    process.on('exit', (code) => {
-      if (code === UPDATE_COMPLETE_EXIT_CODE) relaunchAfterUpdate();
-    });
-    Object.assign(process.env, compileCacheEnv);
-    process.argv.splice(1, Infinity, cliPath, ...cliArgs);
-    await import(pathToFileURL(cliPath).href);
-  } else {
-    const result = spawnSync(
-      process.execPath,
-      ['--expose-gc', cliPath, ...cliArgs],
-      {
-        stdio: 'inherit',
-        env: {
-          ...process.env,
-          ...compileCacheEnv,
-          QWEN_CODE_LAUNCHER_PID: String(process.pid),
-        },
-      },
-    );
-    if (result.error) {
-      exitOnSpawnError(`${process.execPath} ${cliPath}`, result.error);
-    } else if (result.signal) {
-      process.kill(process.pid, result.signal);
-    } else if (result.status !== UPDATE_COMPLETE_EXIT_CODE) {
-      process.exit(result.status ?? 1);
-    } else {
-      relaunchAfterUpdate();
-    }
-  }
-}
+This project keeps the original Apache 2.0 license and ships a NOTICE documenting the source lineage: "Dérivé de Qwen Code (Alibaba), lui-même dérivé de Gemini CLI (Google)".
