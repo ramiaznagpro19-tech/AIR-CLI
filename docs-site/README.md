@@ -1,56 +1,75 @@
-# Qwen Code Docs Site
+# AIR CLI
 
-A documentation website for Qwen Code built with [Next.js](https://nextjs.org/) and [Nextra](https://nextra.site/).
+AIR CLI is a terminal-first AI coding agent for local development, automation, and editor workflows.
 
-## Getting Started
+It preserves the original upstream licensing and attribution while providing a clean AIR-branded package and runtime configuration.
 
-### Prerequisites
+## Overview
 
-- Node.js 18+
-- npm or yarn
+- AI coding assistant in the terminal
+- Works with OpenAI, Anthropic, Gemini, and Vertex AI
+- Supports OpenRouter, Ollama, Mistral, and DeepSeek providers
+- Lightweight local setup with a portable config directory at `~/.air`
 
-### Installation
+## Installation
 
-```bash
-npm install
-```
-
-### Setup Content
-
-Prepare the public documentation content from the parent `docs` directory:
+### npm
 
 ```bash
-npm run link
+npm install -g @air-cli/air-cli
 ```
 
-This creates a `content` directory with copies of the public docs sections.
-Internal planning, design, and E2E notes remain outside the docs site content
-tree.
-
-### Development
-
-Start the development server:
+### Quick start
 
 ```bash
-npm run dev
+air
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser to see the documentation site.
+Inside the session, use `/auth` to configure your model provider and API key.
 
-## Project Structure
+## Provider examples
 
-```
-docs-site/
-├── src/
-│   └── app/
-│       ├── [[...mdxPath]]/    # Dynamic routing for MDX pages
-│       │   └── page.jsx
-│       └── layout.jsx          # Root layout with navbar and footer
-├── mdx-components.js           # MDX component configuration
-├── next.config.mjs             # Next.js configuration
-└── package.json
+### OpenRouter
+
+```json
+{
+  "provider": "openrouter",
+  "apiKey": "YOUR_KEY",
+  "model": "openai/gpt-4o-mini"
+}
 ```
 
-## License
+### Ollama
 
-MIT © Qwen Team
+```json
+{
+  "provider": "ollama",
+  "baseUrl": "http://localhost:11434",
+  "model": "llama3.1"
+}
+```
+
+### Mistral
+
+```json
+{
+  "provider": "mistral",
+  "apiKey": "YOUR_KEY",
+  "model": "mistral-large-latest"
+}
+```
+
+### DeepSeek
+
+```json
+{
+  "provider": "deepseek",
+  "apiKey": "YOUR_KEY",
+  "model": "deepseek-chat"
+}
+```
+
+## Notes
+
+This project retains the original Apache 2.0 license and includes a NOTICE file documenting the upstream lineage from Qwen Code (Alibaba) to Gemini CLI (Google).
+

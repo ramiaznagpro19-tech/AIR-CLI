@@ -1,194 +1,449 @@
-<div align="center">
+#!/usr/bin/env node
 
-[![npm version](https://img.shields.io/npm/v/@qwen-code/qwen-code.svg)](https://www.npmjs.com/package/@qwen-code/qwen-code)
-[![License](https://img.shields.io/github/license/QwenLM/qwen-code.svg)](./LICENSE)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org/)
-[![Downloads](https://img.shields.io/npm/dm/@qwen-code/qwen-code.svg)](https://www.npmjs.com/package/@qwen-code/qwen-code)
+/**
+ * @license
+ * Copyright 2025 Qwen Code
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-<a href="https://trendshift.io/repositories/15287" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15287" alt="QwenLM%2Fqwen-code | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+/**
+ * Production bin entry wrapper.
+ *
+ * For most commands, global.gc() must be available for the memory-pressure
+ * monitor's critical-tier cleanup. On POSIX under Node the entry exposes gc at
+ * runtime and imports cli.js in this process; on Windows and under Bun it
+ * launches the bundled CLI as a child with --expose-gc.
+ *
+ * For bootstrap fast paths: imports cli.js directly in-process, skipping the
+ * spawnSync overhead. These paths do not need global.gc().
+ */
 
-**The open-source AI coding agent for your terminal, editor, desktop, browser, and chat.**
+const relaunchArgs = process.env['QWEN_CODE_RELAUNCH_ARGS'];
+let cliArgs = process.argv.slice(2);
+try {
+  cliArgs = relaunchArgs ? JSON.parse(relaunchArgs) : cliArgs;
+} catch {
+  // Ignore stale or user-provided junk; normal argv is still usable.
+}
+delete process.env['QWEN_CODE_RELAUNCH_ARGS'];
+delete process.env['QWEN_CODE_PENDING_COMPILE_CACHE'];
 
-<a href="https://qwenlm.github.io/qwen-code-docs/zh/users/overview">中文</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/de/users/overview">Deutsch</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/fr/users/overview">français</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/ja/users/overview">日本語</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/ru/users/overview">Русский</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/pt-BR/users/overview">Português (Brasil)</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/ko/users/overview">한국어</a>
+function hasFlag(flag, alias) {
+  for (const arg of cliArgs) {
+    if (arg === '--') {
+      return false;
+    }
+    if (arg === flag || arg === alias) {
+      return true;
+    }
+  }
+  return false;
+}
 
-</div>
+function isInProcessFastPath() {
+  const first = cliArgs[0];
+  if (
+    first === 'serve' ||
+    first === 'mcp' ||
+    first === 'memory' ||
+    first === 'managed-runtime-bootstrap' ||
+    first === 'managed-runtime-bootstrap-worker'
+  ) {
+    return true;
+  }
+  if (first === undefined || first.startsWith('-')) {
+    return hasFlag('--help', '-h') || hasFlag('--version', '-v');
+  }
+  return false;
+}
 
-![Qwen Code in the terminal, desktop app, browser, editor, and chat, with VS Code, Zed, JetBrains, Telegram, DingTalk, WeChat, and Feishu integrations](https://img.alicdn.com/imgextra/i1/O1CN01DXWdF8BDUdD3XPhl_!!6000000001721-2-tps-1743-902.png)
+const isTopLevelVersion =
+  (cliArgs[0] === undefined || cliArgs[0].startsWith('-')) &&
+  hasFlag('--version', '-v');
 
-## Why Qwen Code?
+if (isTopLevelVersion && process.env['CLI_VERSION']) {
+  process.stdout.write(`${process.env['CLI_VERSION']}\n`);
+  process.exit(0);
+}
 
-- **Agentic out of the box** — Auto-Memory, Auto-Skills, SubAgents, Agent Teams, and MCP. Dynamic workflows, zero setup.
-- **Open-source, inside and out** — The framework and the Qwen models are open-source. They evolve together. No vendor lock-in.
-- **Multi-protocol** — Supports OpenAI, Anthropic, Gemini, and Qwen APIs. Any third-party provider or local model (Ollama / vLLM). Switch at runtime.
-- **Beyond the terminal** — IDE plugins, Desktop app, Web UI, SDKs, and chat integrations (Telegram / DingTalk / WeChat / Feishu).
+const { existsSync, readFileSync, realpathSync, statSync } = await import(
+  'node:fs'
+);
+const { createHash } = await import('node:crypto');
+const { homedir, tmpdir } = await import('node:os');
+const { parseEnv } = await import('node:util');
+const { fileURLToPath, pathToFileURL } = await import('node:url');
+const { delimiter, dirname, join, parse, resolve, sep } = await import(
+  'node:path'
+);
 
-> [!TIP]
-> Qwen Code is actively iterating on itself — using its own agent and models to file issues, submit PRs, review code, and run tests. Powered by the community, driven by AI.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const currentEntryPath = realpathSync(fileURLToPath(import.meta.url));
 
-## Installation
+function getHomeDir() {
+  try {
+    return homedir() || tmpdir();
+  } catch {
+    return tmpdir();
+  }
+}
 
-**Linux / macOS:**
+function resolveAirHome() {
+  const configured = process.env['AIR_HOME'] ?? process.env['QWEN_HOME'];
+  if (!configured) return join(getHomeDir(), '.air');
+  if (configured === '~') return getHomeDir();
+  if (configured.startsWith('~/') || configured.startsWith('~\\')) {
+    return join(
+      getHomeDir(),
+      ...configured
+        .slice(2)
+        .split(/[/\\]+/)
+        .filter(Boolean),
+    );
+  }
+  return resolve(configured);
+}
 
-```bash
-curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash
-```
+function preResolveAirHome() {
+  if (Object.hasOwn(process.env, 'AIR_HOME')) return;
+  const home = getHomeDir();
+  for (const candidate of [join(home, '.air', '.env'), join(home, '.env')]) {
+    try {
+      const source = readFileSync(candidate, 'utf8')
+        .replace(/^\uFEFF/, '')
+        .replace(/^(\s*(?:export\s+)?AIR_HOME):[^\S\r\n]+/gm, '$1=')
+        .replace(/^(\s*(?:export\s+)?QWEN_HOME):[^\S\r\n]+/gm, '$1=');
+      const configured = parseEnv(source)['AIR_HOME'] ?? parseEnv(source)['QWEN_HOME'];
+      if (configured) {
+        process.env['AIR_HOME'] = configured;
+        return;
+      }
+    } catch {
+      // Match the CLI's quiet handling of missing or invalid home env files.
+    }
+  }
+}
 
-**Windows:**
+delete process.env['QWEN_CODE_MANAGED_NPM_UPDATE'];
+preResolveAirHome();
 
-```powershell
-irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1 | iex
-```
+function getManagedNpmPin() {
+  try {
+    const pin = JSON.parse(process.env['QWEN_CODE_MANAGED_NPM_PIN'] ?? '');
+    if (pin.bootstrap !== currentEntryPath) return undefined;
+    if (
+      typeof pin.updateRoot !== 'string' ||
+      resolve(pin.updateRoot) !== pin.updateRoot
+    ) {
+      return undefined;
+    }
+    if (pin.version === null) {
+      return { version: null, updateRoot: pin.updateRoot };
+    }
+    return typeof pin.version === 'string' &&
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+        pin.version,
+      )
+      ? { version: pin.version, updateRoot: pin.updateRoot }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
-> Restart your terminal after installation to ensure environment variables take effect.
+const managedNpmPin = getManagedNpmPin();
+const managedNpmUpdateRoot =
+  managedNpmPin?.updateRoot ?? join(resolveAirHome(), 'updates', 'npm');
 
-<details>
-<summary>NPM / Homebrew</summary>
+function getManagedNpmInstallation() {
+  try {
+    if (managedNpmPin?.version === null) return undefined;
+    const launcherRoot = join(
+      managedNpmUpdateRoot,
+      createHash('sha256').update(currentEntryPath).digest('hex').slice(0, 16),
+    );
+    let version = managedNpmPin?.version;
+    if (version === undefined) {
+      const active = JSON.parse(
+        readFileSync(join(launcherRoot, 'active.json'), 'utf8'),
+      );
+      const basePackageJsonPath = [
+        join(__dirname, 'package.json'),
+        join(__dirname, '..', 'package.json'),
+      ].find((candidate) => existsSync(candidate));
+      if (!basePackageJsonPath) return undefined;
+      const basePackage = JSON.parse(readFileSync(basePackageJsonPath, 'utf8'));
+      if (
+        typeof active.version !== 'string' ||
+        !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+          active.version,
+        ) ||
+        typeof active.bootstrap !== 'string' ||
+        realpathSync(active.bootstrap) !== currentEntryPath ||
+        active.baseVersion !== basePackage.version ||
+        active.bootstrapCtimeMs !== statSync(currentEntryPath).ctimeMs
+      ) {
+        return undefined;
+      }
+      version = active.version;
+    }
+    const packageRoot = join(
+      launcherRoot,
+      'versions',
+      version,
+      'node_modules',
+      '@air-cli',
+      'air-cli',
+    );
+    const packageJsonPath = join(packageRoot, 'package.json');
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    const cliPath = join(packageRoot, 'cli.js');
+    if (
+      pkg.name !== '@air-cli/air-cli' ||
+      pkg.version !== version ||
+      !existsSync(cliPath)
+    ) {
+      return undefined;
+    }
+    process.env['QWEN_CODE_MANAGED_NPM_UPDATE'] = 'true';
+    return { cliPath, packageJsonPath, version };
+  } catch {
+    return undefined;
+  }
+}
 
-**NPM** (requires [Node.js 22+](https://nodejs.org/)):
+const standaloneShim = process.env['QWEN_CODE_LAUNCHER_PATH'];
+delete process.env['QWEN_CODE_LAUNCHER_PATH'];
 
-```bash
-npm install -g @qwen-code/qwen-code@latest
-```
+const managedRuntimeBootstrap =
+  cliArgs[0] === 'managed-runtime-bootstrap' ||
+  cliArgs[0] === 'managed-runtime-bootstrap-worker';
+const managedNpmInstallation = managedRuntimeBootstrap
+  ? undefined
+  : getManagedNpmInstallation();
+const validStandaloneShim =
+  standaloneShim && existsSync(standaloneShim) ? standaloneShim : undefined;
+process.env['QWEN_CODE_CLI'] =
+  validStandaloneShim ?? fileURLToPath(import.meta.url);
+if (validStandaloneShim) {
+  delete process.env['QWEN_CODE_MANAGED_NPM_PIN'];
+  delete process.env['QWEN_CODE_MANAGED_NPM_ROOT'];
+} else {
+  process.env['QWEN_CODE_MANAGED_NPM_ROOT'] = managedNpmUpdateRoot;
+  process.env['QWEN_CODE_MANAGED_NPM_PIN'] = JSON.stringify({
+    bootstrap: currentEntryPath,
+    version: managedNpmInstallation?.version ?? null,
+    updateRoot: managedNpmUpdateRoot,
+  });
+}
+const cliPathCandidates = [
+  managedNpmInstallation?.cliPath,
+  join(__dirname, 'cli.js'),
+  join(__dirname, '..', 'dist', 'cli.js'),
+].filter(Boolean);
+const packageJsonPathCandidates = [
+  managedNpmInstallation?.packageJsonPath,
+  join(__dirname, 'package.json'),
+  join(__dirname, '..', 'package.json'),
+].filter(Boolean);
+const cliPath =
+  cliPathCandidates.find((candidate) => existsSync(candidate)) ??
+  cliPathCandidates[0];
+const packageJsonPath =
+  packageJsonPathCandidates.find((candidate) => existsSync(candidate)) ??
+  packageJsonPathCandidates[0];
 
-**Homebrew** (macOS / Linux):
+if (!process.env['QWEN_CODE_STARTUP_VERSION']?.trim()) {
+  try {
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    process.env['QWEN_CODE_STARTUP_VERSION'] = pkg.version || 'unknown';
+  } catch {
+    // The CLI has its own version fallback when package metadata is unavailable.
+  }
+}
 
-```bash
-brew install qwen-code
-```
+if (isTopLevelVersion) {
+  try {
+    const { readFileSync } = await import('node:fs');
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    process.stdout.write(`${pkg.version || 'unknown'}\n`);
+    process.exit(0);
+  } catch {
+    // Fall through to cli.js, which has its own version fallback.
+  }
+}
 
-</details>
+if (isInProcessFastPath()) {
+  const { default: module } = await import('node:module');
+  const compileCache = module.enableCompileCache?.();
+  if (
+    cliArgs[0] === 'serve' &&
+    !process.env['NODE_COMPILE_CACHE'] &&
+    compileCache?.status === module.constants?.compileCacheStatus?.ENABLED &&
+    compileCache?.directory
+  ) {
+    process.env['QWEN_CODE_PENDING_COMPILE_CACHE'] = compileCache.directory;
+  }
+  process.argv[1] = cliPath;
+  await import(pathToFileURL(cliPath).href);
+} else {
+  const { spawnSync } = await import('node:child_process');
+  const UPDATE_COMPLETE_EXIT_CODE = 44;
+  const SPAWN_FAILURE_EXIT_CODE = 126;
+  const exitOnSpawnError = (command, error) => {
+    const detail = [
+      ...[error.code, error.syscall].filter(
+        (part) => typeof part === 'string' && !error.message.includes(part),
+      ),
+      ...(error.errno === undefined ? [] : [`errno ${error.errno}`]),
+    ].join(' ');
+    process.stderr.write(
+      `Failed to start ${command}: ${error.message}${detail ? ` (${detail})` : ''}\n`,
+    );
+    process.exit(SPAWN_FAILURE_EXIT_CODE);
+  };
+  const UNSAFE_CMD_CHARS = /[&|<>^%!"`\n\r]/;
+  const entryPath = resolve(process.argv[1]);
+  delete process.env['QWEN_CODE_LAUNCHER_PID'];
+  const launchEnv = { ...process.env };
 
-## Quick Start
+  const findLauncher = () => {
+    const launcherNames =
+      process.platform === 'win32'
+        ? ['air.cmd', 'air.exe', 'air']
+        : ['air'];
+    const entryRootLength = parse(entryPath).root.length;
+    const launcherFromEnv = standaloneShim;
+    const launcherCandidates = process.env['PATH']
+      ?.split(delimiter)
+      .flatMap((dir) => launcherNames.map((name) => join(dir, name)))
+      .filter((candidate) => existsSync(candidate));
+    return launcherFromEnv && existsSync(launcherFromEnv)
+      ? launcherFromEnv
+      : launcherCandidates
+          ?.map((candidate) => {
+            if (resolve(candidate) === entryPath) {
+              return { candidate, score: Number.MAX_SAFE_INTEGER };
+            }
+            try {
+              if (realpathSync(candidate) === realpathSync(entryPath)) {
+                return { candidate, score: Number.MAX_SAFE_INTEGER };
+              }
+            } catch {
+              // Fall back to matching the installation prefix.
+            }
+            let parent = resolve(dirname(candidate));
+            while (
+              parent.length > entryRootLength &&
+              entryPath !== parent &&
+              !entryPath.startsWith(`${parent}${sep}`)
+            ) {
+              const next = dirname(parent);
+              if (next === parent) break;
+              parent = next;
+            }
+            return { candidate, score: parent.length };
+          })
+          .filter(({ score }) => score > entryRootLength)
+          .sort((a, b) => b.score - a.score)[0]?.candidate;
+  };
 
-Open a terminal in your project and start Qwen Code:
+  const relaunchAfterUpdate = () => {
+    const launcher = findLauncher();
+    if (!launcher) {
+      process.stderr.write(
+        'Update successful! The new version will be used on your next run.\n',
+      );
+      process.exit(0);
+    }
+    const relaunchEnv = {
+      ...launchEnv,
+      QWEN_CODE_RELAUNCH_ARGS: JSON.stringify(cliArgs),
+      QWEN_CODE_SKIP_UPDATE_CHECK_ONCE: 'true',
+    };
+    delete relaunchEnv['QWEN_CODE_STARTUP_VERSION'];
+    delete relaunchEnv['QWEN_CODE_MANAGED_NPM_PIN'];
+    if (
+      process.platform === 'win32' &&
+      launcher.endsWith('.cmd') &&
+      UNSAFE_CMD_CHARS.test(launcher)
+    ) {
+      process.stderr.write(
+        'Update successful! The new version will be used on your next run.\n',
+      );
+      process.exit(0);
+      return;
+    }
+    const relaunchResult =
+      process.platform === 'win32' && launcher.endsWith('.cmd')
+        ? spawnSync(
+            process.env['ComSpec'] ?? 'cmd.exe',
+            ['/d', '/s', '/c', `""${launcher}""`],
+            {
+              stdio: 'inherit',
+              env: relaunchEnv,
+              windowsVerbatimArguments: true,
+            },
+          )
+        : spawnSync(launcher, [], {
+            stdio: 'inherit',
+            env: relaunchEnv,
+          });
+    if (relaunchResult.error) {
+      process.stderr.write(
+        'Update successful! The new version will be used on your next run.\n',
+      );
+      exitOnSpawnError(launcher, relaunchResult.error);
+    } else if (relaunchResult.signal) {
+      process.kill(process.pid, relaunchResult.signal);
+    } else {
+      process.exit(relaunchResult.status ?? 1);
+    }
+  };
 
-```bash
-cd /path/to/your-project
-qwen
-```
+  const { default: module } = await import('node:module');
+  const compileCache = module.enableCompileCache?.();
+  const compileCacheEnv =
+    !process.env['NODE_COMPILE_CACHE'] &&
+    compileCache?.status === module.constants?.compileCacheStatus?.ENABLED &&
+    compileCache?.directory
+      ? { NODE_COMPILE_CACHE: compileCache.directory }
+      : {};
 
-Inside the session, run `/auth` to configure your provider and API key. Then try:
-
-```text
-Explain this repository and show me where to start.
-```
-
-See the [Authentication Guide](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) and [Settings Reference](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/) for detailed setup.
-
-<details>
-<summary>See the terminal interface</summary>
-
-![Qwen Code terminal interface](https://img.alicdn.com/imgextra/i2/O1CN01K0nwj41RM1Il8kB0t_!!6000000002096-2-tps-1544-1060.png)
-
-</details>
-
-## How to Use Qwen Code
-
-Choose the interface that fits your workflow:
-
-| Interface    | Get started                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Terminal** | Run `qwen` in your project — see [Quick Start](#quick-start).                                                                                                                                                                                                                                                                                                                                             |
-| **Desktop**  | [Download Qwen Code Desktop](https://github.com/QwenLM/qwen-code/releases/tag/desktop-latest) for macOS, Windows, and Linux.                                                                                                                                                                                                                                                                              |
-| **Web**      | Run `qwen serve --open` to open the [Web UI](https://qwenlm.github.io/qwen-code-docs/en/users/qwen-serve/) in your browser. _(experimental)_                                                                                                                                                                                                                                                              |
-| **Editor**   | Set up [VS Code](https://qwenlm.github.io/qwen-code-docs/en/users/integration-vscode/), [Zed](https://qwenlm.github.io/qwen-code-docs/en/users/integration-zed/), or [JetBrains](https://qwenlm.github.io/qwen-code-docs/en/users/integration-jetbrains/).                                                                                                                                                |
-| **Chat**     | Connect [Telegram](https://qwenlm.github.io/qwen-code-docs/en/users/features/channels/telegram/), [DingTalk](https://qwenlm.github.io/qwen-code-docs/en/users/features/channels/dingtalk/), [WeChat](https://qwenlm.github.io/qwen-code-docs/en/users/features/channels/weixin/), or [Feishu](https://qwenlm.github.io/qwen-code-docs/en/users/features/channels/feishu/), then run `qwen channel start`. |
-
-For automation and custom integrations:
-
-- **Headless** — Run `qwen -p "..."` in scripts, CI/CD, or batch jobs.
-- **SDKs** — Build with [TypeScript](./packages/sdk-typescript/README.md), [Python](./packages/sdk-python/README.md), or [Java](./packages/sdk-java/qwencode/README.md).
-- **Daemon** — Run `qwen serve` to connect clients over HTTP + SSE (ACP). _(experimental)_ [Daemon guide](https://qwenlm.github.io/qwen-code-docs/en/users/qwen-serve/).
-- **Computer Use** — Set up [native MCP tools](./packages/cua-driver/README.md#agent-integration) or [Node REPL + SDK](./packages/node-repl/README.md#usage) in Qwen Code, Claude Code, or Codex.
-
-<details>
-<summary>SDK example (Python)</summary>
-
-```python
-import asyncio
-
-from qwen_code_sdk import is_sdk_result_message, query
-
-
-async def main() -> None:
-    result = query(
-        "Summarize the repository layout.",
-        {
-            "cwd": "/path/to/project",
-            "path_to_qwen_executable": "qwen",
+  if (process.platform !== 'win32' && !process.versions.bun) {
+    const [{ setFlagsFromString }, { runInNewContext }] = await Promise.all([
+      import('node:v8'),
+      import('node:vm'),
+    ]);
+    setFlagsFromString('--expose-gc');
+    globalThis.gc ??= runInNewContext('gc');
+    process.on('exit', (code) => {
+      if (code === UPDATE_COMPLETE_EXIT_CODE) relaunchAfterUpdate();
+    });
+    Object.assign(process.env, compileCacheEnv);
+    process.argv.splice(1, Infinity, cliPath, ...cliArgs);
+    await import(pathToFileURL(cliPath).href);
+  } else {
+    const result = spawnSync(
+      process.execPath,
+      ['--expose-gc', cliPath, ...cliArgs],
+      {
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          ...compileCacheEnv,
+          QWEN_CODE_LAUNCHER_PID: String(process.pid),
         },
-    )
-
-    async for message in result:
-        if is_sdk_result_message(message):
-            print(message["result"])
-
-
-asyncio.run(main())
-```
-
-</details>
-
-## Capabilities
-
-If you know Claude Code, you already know Qwen Code — and then some. We've put significant effort into [bringing Qwen Code to feature parity with Claude Code](https://github.com/wenshao/codeagents/blob/main/docs/comparison/qwen-code-improvement-report.md), improving both breadth and reliability across the board.
-
-| Feature                                                            | Qwen Code | Claude Code |
-| ------------------------------------------------------------------ | :-------: | :---------: |
-| SubAgents, Agent Teams, Dynamic Workflows                          |     ✓     |      ✓      |
-| Auto-Memory, Auto-Skills, Hooks                                    |     ✓     |      ✓      |
-| Built-in Skills (/review, /batch, /loop, /bugfix…)                 |     ✓     |      ✓      |
-| MCP, Plan Mode, LSP Integration                                    |     ✓     |      ✓      |
-| Auto Mode, Sandbox, Git Worktrees                                  |     ✓     |      ✓      |
-| Computer Use (desktop automation)                                  |     ✓     |      ✓      |
-| IDE Plugins (VS Code / JetBrains / Zed)                            |     ✓     |      ✓      |
-| SDK                                                                |     ✓     |      ✓      |
-| Headless Mode, Session Management                                  |     ✓     |      ✓      |
-| Open-source — model and framework                                  |     ✓     |      —      |
-| Multi-protocol (OpenAI / Anthropic / Gemini / Qwen + any provider) |     ✓     |      —      |
-| Agent Arena (multi-model head-to-head on same task)                |     ✓     |      —      |
-| Daemon Mode — `qwen serve` (multi-client shared agent)             |     ✓     |      —      |
-| IM Channels (Telegram / DingTalk / WeChat / Feishu)                |     ✓     |      —      |
-
-## Qwen Code Evaluation
-
-On **SWE-bench Verified**, seven Qwen Code versions scored **76.40%–77.80%** on average using the same Qwen 3.7 Max model (500 tasks, three trials per version).
-
-![Average SWE-bench Verified scores by Qwen Code version: 0.0.14, 77.80%; 0.1.0, 76.73%; 0.5.0, 76.60%; 0.10.0, 76.47%; 0.15.0, 77.67%; 0.19.0, 76.40%; 0.22.0, 77.33%.](./.github/assets/qwen-code-avg-score-trend.svg)
-
-[Full results and evaluation configuration →](./docs/evaluation.md)
-
-## Ecosystem
-
-- [**Qwen Code Desktop**](https://github.com/QwenLM/qwen-code/releases/tag/desktop-latest) — Official desktop app for macOS, Windows, and Linux
-- [**AionUi**](https://github.com/iOfficeAI/AionUi) — A modern GUI for command-line AI tools including Qwen Code
-- [**Gemini CLI Desktop**](https://github.com/Piebald-AI/gemini-cli-desktop) — A cross-platform desktop/web/mobile UI for Qwen Code
-- [**qwen-audio-agent**](https://github.com/QwenAudio/qwen-audio-agent) — Realtime full-duplex voice frontend for Qwen Code over ACP — talk hands-free with barge-in and a local wake word
-
-- [**🦞 Qwen Code Claw**](https://github.com/openclaw/acpx) — Let other agents (Claude, Codex, etc.) delegate coding tasks to Qwen Code via ACP. Paste this prompt into your agent:
-
-```text
-Use Qwen Code as a coding agent. First, fetch and read this skill reference:
-https://raw.githubusercontent.com/QwenLM/qwen-code/refs/heads/main/.qwen/skills/qwen-code-claw/SKILL.md
-Then follow the instructions inside to install, authenticate, and use Qwen Code via acpx for all coding tasks.
-```
-
-- [**Aliyun Model Studio CLI**](https://github.com/modelstudioai/cli) — Official CLI for Aliyun's AI platform (`bailian-cli`). Extends Qwen Code with image/video generation, knowledge retrieval, app orchestration, and model deployment
-
-## Privacy
-
-See the [Terms of Service and Privacy Notice](./docs/users/support/tos-privacy.md), including [Chrome extension and Browser Use data handling](./docs/users/support/tos-privacy.md#chrome-extension-and-browser-use).
-
-## Contributing
-
-Contributions are welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
-
-## Acknowledgments
-
-This project was originally based on [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) v0.8.2. We gratefully acknowledge the Gemini CLI team's excellent work. Starting from Qwen Code v0.1, we stopped syncing with upstream and began independent development as a multi-protocol, multi-platform agent framework with deep integrations for Qwen models and beyond.
+      },
+    );
+    if (result.error) {
+      exitOnSpawnError(`${process.execPath} ${cliPath}`, result.error);
+    } else if (result.signal) {
+      process.kill(process.pid, result.signal);
+    } else if (result.status !== UPDATE_COMPLETE_EXIT_CODE) {
+      process.exit(result.status ?? 1);
+    } else {
+      relaunchAfterUpdate();
+    }
+  }
+}
